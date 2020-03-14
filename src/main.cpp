@@ -6,42 +6,48 @@
 #include <NTPClient.h>
 #include <WiFiUdp.h>
 #include <ArduinoJson.h>
+#include <TM1637Display.h>
 
-ESP8266WebServer Server;
-AutoConnect      Portal(Server);
+// Server
+ESP8266WebServer webServer;
+AutoConnect      acPortal(webServer);
+WiFiClient       wifiClient;
 
-// Define NTP Client to get time
+// Time client
 WiFiUDP ntpUDP;
-NTPClient timeClient(ntpUDP, "pool.ntp.org");
-
-const size_t jsonParserCapacity = JSON_OBJECT_SIZE(15) + 290;
-DynamicJsonDocument jsonDoc(jsonParserCapacity);
-
+NTPClient ntpClient(ntpUDP, "pool.ntp.org");
+const char worldTimeApiURL[] = "http://worldtimeapi.org/api/ip";
+const size_t worldTimeApiJsonCapacity = JSON_OBJECT_SIZE(15) + 290;
+DynamicJsonDocument worldTimeApiJSON(worldTimeApiJsonCapacity);
 bool offsetNeedUpdate = false;
+
+// Display
+const int CLK = D6;
+const int DIO = D5;
+TM1637Display display(CLK, DIO);
 
 void rootPage() {
   char content[] = "Hello, world";
-  Server.send(200, "text/plain", content);
+  webServer.send(200, "text/plain", content);
 }
 
-bool updateOffset()
+bool updateTimeOffset()
 {
-  bool offsetUpdated = false;
-  WiFiClient client;
-  HTTPClient http;
-  if (http.begin(client, "http://worldtimeapi.org/api/ip"))
+  bool timeOffsetUpdated = false;
+  HTTPClient worldTimeApiClient;
+  if (worldTimeApiClient.begin(wifiClient, worldTimeApiURL))
   {
-    int httpCode = http.GET();
+    int httpCode = worldTimeApiClient.GET();
     if (httpCode == HTTP_CODE_OK || httpCode == HTTP_CODE_MOVED_PERMANENTLY)
     {
-      String payload = http.getString();
-      // Serial.println(payload);
-      deserializeJson(jsonDoc, payload);
-      int rawOffset = jsonDoc["raw_offset"];
-      int dstOffset = jsonDoc["dst_offset"];
-      timeClient.setTimeOffset(rawOffset + dstOffset);
-      Serial.printf("Offset: %d\n", rawOffset + dstOffset);
-      offsetUpdated = true;
+      String worldTimeApiContent = worldTimeApiClient.getString();
+      deserializeJson(worldTimeApiJSON, worldTimeApiContent);
+      int rawOffset = worldTimeApiJSON["raw_offset"];
+      int dstOffset = worldTimeApiJSON["dst_offset"];
+      int totalOffset = rawOffset + dstOffset;
+      ntpClient.setTimeOffset(totalOffset);
+      Serial.printf("[HTTP] Total Offset: %d\n", totalOffset);
+      timeOffsetUpdated = true;
     }
     else
     {
@@ -51,63 +57,67 @@ bool updateOffset()
       }
       else
       {
-        Serial.printf("[HTTP] GET... failed, error: %s\n", http.errorToString(httpCode).c_str());
+        Serial.printf("[HTTP] GET... failed, error: %s\n", worldTimeApiClient.errorToString(httpCode).c_str());
       }
     }
   }
   else
   {
-    Serial.printf("[HTTP} Unable to connect\n");
+    Serial.printf("[HTTP] Unable to connect\n");
   }
-  return offsetUpdated;
+  return timeOffsetUpdated;
 }
 
 void setup() {
-  delay(1000);
   Serial.begin(115200);
-  Serial.println();
-  Server.on("/home", rootPage);
 
+  webServer.on("/home", rootPage);
+
+  // AutoConnect
   AutoConnectConfig acConfig;
-
   acConfig.apid = "WiFi_Clock";
   acConfig.psk = "WiFi_Clock";
   acConfig.title = "WiFi Clock";
   acConfig.homeUri = "/home";
-  Portal.config(acConfig);
+  acPortal.config(acConfig);
 
-  if (Portal.begin()) {
-    Serial.println("HTTP server:" + WiFi.localIP().toString());
-    timeClient.begin();
-    while(!updateOffset())
+  // Display
+  display.setBrightness(0x0a); // Maximum brightness
+
+  if (acPortal.begin()) {
+    Serial.println("Client started: " + WiFi.localIP().toString());
+
+    // Start NTP client
+    ntpClient.begin();
+
+    // Get and set the time offset
+    while(!updateTimeOffset())
     {
-      delay(1000);
+      delay(2000);
     }
   }
 }
 
 void loop() {
-  Portal.handleClient();
-  timeClient.update();
+  acPortal.handleClient();
 
-  if(offsetNeedUpdate && timeClient.getMinutes() == 0)
+  // Update NTP time
+  ntpClient.update();
+
+  // Get and set the time offset the first minute of each hour
+  if(offsetNeedUpdate && ntpClient.getMinutes() == 0)
   {
-    bool offsetUpdated = updateOffset();
-    if(offsetUpdated)
-    {
-      offsetNeedUpdate = false;
-    }
+    offsetNeedUpdate = !updateTimeOffset();
   }
-  else if(timeClient.getMinutes() > 0)
+  else if(ntpClient.getMinutes() > 0)
   {
     offsetNeedUpdate = true;
   }
   
-  Serial.print(timeClient.getHours());
-  Serial.print(":");
-  Serial.print(timeClient.getMinutes());
-  Serial.print(":");
-  Serial.println(timeClient.getSeconds());
+  Serial.println("Time: " + ntpClient.getFormattedTime());
+
+  int time = ntpClient.getHours() * 100 + ntpClient.getMinutes();
+  display.showNumberDecEx(time, 0b01000000);
 
   delay(1000);
 }
