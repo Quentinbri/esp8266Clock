@@ -14,7 +14,6 @@ ESP8266WebServer webServer;
 WiFiClient       wifiClient;
 AutoConnect      acPortal(webServer);
 AutoConnectAux   acClockConfig;
-ACRadio(acClockConfigOrientation, {"Cable on left", "Cable on right"}, "Orientation", AC_Vertical, 1);
 
 // Time client
 WiFiUDP ntpUDP;
@@ -55,6 +54,13 @@ static const char AUX_CLOCKCONFIG[] PROGMEM = R"(
       "selected": 0
     },
     {
+      "name": "brightness",
+      "type": "ACSelect",
+      "label": "Select Brightness",
+      "option": ["1","2","3","4","5","6","7"],
+      "selected": 7
+    },
+    {
       "name": "newline",
       "type": "ACElement",
       "value": "<br>"
@@ -74,15 +80,16 @@ void rootPage() {
     "<html>"
     "<head>"
     "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
-    "<script type=\"text/javascript\">"
-    "setTimeout(\"location.reload()\", 1000);"
-    "</script>"
+    // "<script type=\"text/javascript\">"
+    // "setTimeout(\"location.reload()\", 5000);"
+    // "</script>"
     "</head>"
     "<body>"
     "<h2 align=\"center\" style=\"color:blue;margin:20px;\">esp8266Clock</h2>"
-    "<h3 align=\"center\" style=\"color:gray;margin:10px;\">{{DateTime}}</h3>"
-    "<p style=\"text-align:center;\">Reload the page to update the time.</p>"
-    "<p></p><p style=\"padding-top:15px;text-align:center\">" AUTOCONNECT_LINK(COG_24) "</p>"
+    // "<h3 align=\"center\" style=\"color:gray;margin:10px;\">{{DateTime}}</h3>"
+    // "<p style=\"text-align:center;\">Reload the page to update the time.</p>"
+    // "<p></p>"
+    "<p style=\"padding-top:15px;text-align:center\">" AUTOCONNECT_LINK(COG_24) "</p>"
     "</body>"
     "</html>";
   String truncatedTime = formattedTime.substring(0,5);
@@ -95,6 +102,7 @@ void applyPage() {
   // Values are accessible with the element name.
   //String  tz = webServer.arg("orientation");
   String selectedOrientation = webServer.arg("orientation");
+  String selectedBrightnessString = webServer.arg("brightness");
 
   if(selectedOrientation == "Default")
   {
@@ -105,7 +113,9 @@ void applyPage() {
     displayOrientation = rotate;
   }
 
-  webServer.sendHeader("Location", String("http://") + webServer.client().localIP().toString() + String("/"));
+  display.setBrightness(selectedBrightnessString.toInt());
+
+  webServer.sendHeader("Location", String("http://") + webServer.client().localIP().toString() + String("/clock_config"));
   webServer.send(302, "text/plain", "");
   webServer.client().flush();
   webServer.client().stop();
